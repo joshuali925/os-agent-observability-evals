@@ -17,13 +17,15 @@ Docs: https://docs.confident-ai.com/
 from __future__ import annotations
 
 import time
-
+import sys
 from acme_shared import setup_observability, score, full_dataset
 from acme_shared import observe, Op, enrich
 from acme_shared.tracking import install, track_case
 from acme_shared.langgraph_agent import handle_support_question
-
-
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+from deepeval.test_case import LLMTestCase, ToolCall
+from deepeval.metrics import AnswerRelevancyMetric, ToolCorrectnessMetric
 def _judge_model():
     """Pick the LLM DeepEval uses to judge.
 
@@ -44,8 +46,7 @@ def _judge_model():
 
 def _deepeval_score(case, answer, tools_called):
     """Run DeepEval metrics and return a dict of metric_name -> score."""
-    from deepeval.test_case import LLMTestCase, ToolCall
-    from deepeval.metrics import AnswerRelevancyMetric, ToolCorrectnessMetric
+    
 
     test_case = LLMTestCase(
         input=case.question,
@@ -102,7 +103,7 @@ def run_case(case) -> dict:
             attrs["gen_ai.evaluation.evaluator.id"] = "deepeval-tool-correctness"
             attrs["gen_ai.evaluation.evaluator.type"] = "deterministic"
             
-        score(name=f"deepeval.{name}", value=value, **attrs)
+        score(name=f"deepeval.{name}", value=value, attributes=attrs)
 
 
     passed = scores["answer_relevancy"] >= 0.7 and scores["tool_correctness"] >= 0.99
@@ -112,6 +113,13 @@ def run_case(case) -> dict:
 
 def main() -> None:
     setup_observability(service_name="acme-support-agent")
+    
+    # Add a file exporter so the traces are saved to eval_outputs.json automatically
+    out_file = open("eval_outputs.json", "w")
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+    trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter(out=out_file)))
+
     install()
     results = [run_case(c) for c in full_dataset()]
     passed = sum(r["passed"] for r in results)
@@ -126,6 +134,21 @@ def main() -> None:
               f"tool_correctness={s['tool_correctness']:.2f}  tools={r['tools']}  {r['latency_s']}s")
     print("=" * 72)
     print("DeepEval scores are emitted as score() -> query them beside traces in OpenSearch.\n")
+
+    # Flush spans and fix the JSON format to be a valid array
+    trace.get_tracer_provider().shutdown()
+    out_file.close()
+    try:
+        with open("eval_outputs.json", "r") as f:
+            raw = f.read().strip()
+        if raw:
+            # The exporter dumps independent JSON objects. Wrap them in a list.
+            import re
+            fixed = "[\n" + re.sub(r'\}\n\{', '},\n{', raw) + "\n]"
+            with open("eval_outputs.json", "w") as f:
+                f.write(fixed)
+    except Exception as e:
+        pass
 
 
 if __name__ == "__main__":
