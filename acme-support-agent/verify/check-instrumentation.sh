@@ -22,15 +22,15 @@ ppl "source=otel-v1-apm-span-* | stats count()"
 
 echo
 echo "==> 3. Operation types present (want invoke_agent, chat, execute_tool)"
-ppl "source=otel-v1-apm-span-* | stats count() by serviceName, \`attributes.gen_ai.operation.name\`"
+ppl "source=otel-v1-apm-span-* | stats count() by serviceName, \`span.attributes.gen_ai@operation@name\`"
 
 echo
 echo "==> 4. Tool calls captured"
-ppl "source=otel-v1-apm-span-* | where \`attributes.gen_ai.operation.name\` = 'execute_tool' | stats count() by \`attributes.gen_ai.tool.name\`"
+ppl "source=otel-v1-apm-span-* | where \`span.attributes.gen_ai@operation@name\` = 'execute_tool' | stats count() by \`span.attributes.gen_ai@tool@name\`"
 
 echo
 echo "==> 5. Token usage attached to chat spans"
-ppl "source=otel-v1-apm-span-* | where \`attributes.gen_ai.usage.input_tokens\` > 0 | stats sum(\`attributes.gen_ai.usage.input_tokens\`) as in_tokens, sum(\`attributes.gen_ai.usage.output_tokens\`) as out_tokens by \`attributes.gen_ai.request.model\`"
+ppl "source=otel-v1-apm-span-* | where cast(\`span.attributes.gen_ai@usage@input_tokens\` as int) > 0 | stats sum(cast(\`span.attributes.gen_ai@usage@input_tokens\` as int)) as in_tokens, sum(cast(\`span.attributes.gen_ai@usage@output_tokens\` as int)) as out_tokens by \`span.attributes.gen_ai@request@model\`"
 
 echo
 echo "✅ If all five returned data, instrumentation is healthy."

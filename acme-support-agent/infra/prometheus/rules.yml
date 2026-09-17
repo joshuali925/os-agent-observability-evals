@@ -1,9 +1,12 @@
 # RED metrics recording rules + SLO burn-rate alerts for the Acme Support Agent.
 # These back the "monitor production" step of the tutorial (blog Part 7).
 #
-# Metric names assume the agent emits OTel metrics that the collector exports
-# under the gen_ai.* namespace. Adjust the source metric names to match your
-# instrumentation if they differ.
+# Source metrics come from the collector's spanmetrics connector, which derives
+# traces_span_metrics_calls_total and traces_span_metrics_duration_seconds_* from
+# the trace stream (metric duration unit is seconds). The connector promotes
+# the gen_ai.agent.name / gen_ai.operation.name span attributes to the labels
+# gen_ai_agent_name / gen_ai_operation_name, and sets status_code per span.
+# The rules scope to invoke_agent spans = one agent request each.
 
 groups:
   - name: acme-red-metrics
@@ -11,24 +14,29 @@ groups:
     rules:
       # Rate: agent invocations per second
       - record: acme:agent_requests:rate5m
-        expr: sum(rate(gen_ai_client_operation_duration_count[5m])) by (gen_ai_agent_name)
+        expr: sum(rate(traces_span_metrics_calls_total{gen_ai_operation_name="invoke_agent"}[5m])) by (gen_ai_agent_name)
 
-      # Errors: error ratio per agent
+      # Errors: error ratio per agent. The `or ... * 0` keeps a 0 series for healthy
+      # agents (no error spans) instead of an empty result.
       - record: acme:agent_errors:ratio5m
         expr: |
-          sum(rate(gen_ai_client_operation_duration_count{error_type!=""}[5m])) by (gen_ai_agent_name)
+          (
+            sum(rate(traces_span_metrics_calls_total{gen_ai_operation_name="invoke_agent",status_code="STATUS_CODE_ERROR"}[5m])) by (gen_ai_agent_name)
+            or
+            sum(rate(traces_span_metrics_calls_total{gen_ai_operation_name="invoke_agent"}[5m])) by (gen_ai_agent_name) * 0
+          )
           /
-          sum(rate(gen_ai_client_operation_duration_count[5m])) by (gen_ai_agent_name)
+          sum(rate(traces_span_metrics_calls_total{gen_ai_operation_name="invoke_agent"}[5m])) by (gen_ai_agent_name)
 
       # Duration: p95 latency per agent (seconds)
       - record: acme:agent_latency:p95_5m
         expr: |
           histogram_quantile(0.95,
-            sum(rate(gen_ai_client_operation_duration_bucket[5m])) by (le, gen_ai_agent_name))
+            sum(rate(traces_span_metrics_duration_seconds_bucket{gen_ai_operation_name="invoke_agent"}[5m])) by (le, gen_ai_agent_name))
 
-      # Cost proxy: output tokens per second per model
-      - record: acme:tokens_output:rate5m
-        expr: sum(rate(gen_ai_client_token_usage_sum{gen_ai_token_type="output"}[5m])) by (gen_ai_request_model)
+      # Cost: token usage is a span attribute (gen_ai.usage.*), not a metric — query
+      # it via PPL (see verify/queries.md). A Prometheus token-cost rule needs the SDK
+      # to emit a token-usage metric instrument, which this stack does not.
 
   - name: acme-slo-alerts
     rules:

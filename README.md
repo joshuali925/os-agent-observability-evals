@@ -75,8 +75,11 @@ cd os-agent-observability-evals/acme-support-agent
 docker compose up -d
 ./verify/check-stack.sh
 
-# 3. run the agent on your framework
-cd python
+# 3. install the SDK from source (it isn't on PyPI yet), then the agent
+cd ..
+git clone https://github.com/opensearch-project/genai-observability-sdk-py
+pip install -e ./genai-observability-sdk-py
+cd acme-support-agent/python
 pip install -e ".[openai]"          # or [anthropic], [bedrock], [langchain], [llamaindex], [all]
 export OPENAI_API_KEY=sk-...
 python -m acme.run "where is my order #1007?"

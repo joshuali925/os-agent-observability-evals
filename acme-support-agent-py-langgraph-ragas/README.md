@@ -17,6 +17,10 @@ Bring up the stack from [`../acme-support-agent`](../acme-support-agent)
 (`docker compose up -d`), then:
 
 ```bash
+# The GenAI SDK isn't on PyPI yet — install it from source first:
+git clone https://github.com/opensearch-project/genai-observability-sdk-py ../genai-observability-sdk-py
+pip install -e ../genai-observability-sdk-py
+
 pip install -e ../acme-shared
 pip install -e .
 export OPENAI_API_KEY=sk-...     # used by the agent and the Ragas judge

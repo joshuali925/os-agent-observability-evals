@@ -105,8 +105,8 @@ Local first. One Docker Compose brings up the whole pipeline: OpenSearch, the Op
 Collector, Data Prepper, Prometheus, and OpenSearch Dashboards.
 
 ```bash
-git clone https://github.com/opensearch-project/observability
-cd observability/ai-observability
+git clone https://github.com/anirudha/os-agent-observability-evals
+cd os-agent-observability-evals/acme-support-agent
 docker compose up -d
 ```
 
@@ -141,18 +141,20 @@ This is the "meet you where you are" core. Pick your runtime.
 ### 3a. Python — the native SDK
 
 Install the SDK with the extra for whatever framework you already run. You don't rewrite your
-agent; you add auto-instrumentation for the library you're using.
+agent; you add auto-instrumentation for the library you're using. The SDK isn't published to
+PyPI yet, so install it from source and pick the extra that matches your stack:
 
 ```bash
-# pick the extra that matches your stack
-pip install "opensearch-genai-observability-sdk-py[openai]"
-pip install "opensearch-genai-observability-sdk-py[anthropic]"
-pip install "opensearch-genai-observability-sdk-py[bedrock]"
-pip install "opensearch-genai-observability-sdk-py[langchain]"
-pip install "opensearch-genai-observability-sdk-py[llamaindex]"
+git clone https://github.com/opensearch-project/genai-observability-sdk-py
+
+pip install "./genai-observability-sdk-py[openai]"
+pip install "./genai-observability-sdk-py[anthropic]"
+pip install "./genai-observability-sdk-py[bedrock]"
+pip install "./genai-observability-sdk-py[langchain]"
+pip install "./genai-observability-sdk-py[llamaindex]"
 
 # or everything, for a multi-framework agent
-pip install "opensearch-genai-observability-sdk-py[all]"
+pip install "./genai-observability-sdk-py[all]"
 ```
 
 Auto-instrumentation covers OpenAI (and OpenAI Agents), Anthropic, Bedrock, Google AI,
@@ -181,7 +183,7 @@ def handle_support_question(question: str, conversation_id: str) -> str:
     enrich(
         model="gpt-4o",
         provider="openai",
-        conversation_id=conversation_id,   # ties multi-turn sessions together
+        session_id=conversation_id,   # sets gen_ai.conversation.id; ties multi-turn sessions together
     )
     # your existing agent loop — unchanged.
     # auto-instrumentation emits chat + execute_tool + retrieval spans for you.
@@ -291,13 +293,16 @@ curl -sk -u admin:'My_password_123!@#' \
 ```
 
 **2. Spans carry the GenAI attributes and the right shape.** Send Acme one question
-("where's my order #1007?") and confirm you see the expected operation types:
+("where's my order #1007?") and confirm you see the expected operation types. (Data
+Prepper flattens each OTel span attribute into the index as
+`` `span.attributes.<key-with-dots-as-@>` `` — so `gen_ai.operation.name` is queried
+as `` `span.attributes.gen_ai@operation@name` ``.)
 
 ```bash
 curl -sk -u admin:'My_password_123!@#' \
   -X POST https://localhost:9200/_plugins/_ppl \
   -H 'Content-Type: application/json' \
-  -d '{"query": "source=otel-v1-apm-span-* | stats count() by serviceName, `attributes.gen_ai.operation.name`"}'
+  -d '{"query": "source=otel-v1-apm-span-* | stats count() by serviceName, `span.attributes.gen_ai@operation@name`"}'
 ```
 
 You want to see `invoke_agent`, `chat`, and `execute_tool` for `acme-support-agent`. The
@@ -330,7 +335,7 @@ Reconstruct a single trace (the whole reasoning tree for one question):
 curl -sk -u admin:'My_password_123!@#' \
   -X POST https://localhost:9200/_plugins/_ppl \
   -H 'Content-Type: application/json' \
-  -d '{"query": "source=otel-v1-apm-span-* | where traceId = '\''<TRACE_ID>'\'' | fields spanId, parentSpanId, name, `attributes.gen_ai.operation.name`, durationInNanos | sort startTime"}'
+  -d '{"query": "source=otel-v1-apm-span-* | where traceId = '\''<TRACE_ID>'\'' | fields spanId, parentSpanId, name, `span.attributes.gen_ai@operation@name`, durationInNanos | sort startTime"}'
 ```
 
 Find slow agent invocations:
@@ -339,7 +344,7 @@ Find slow agent invocations:
 curl -sk -u admin:'My_password_123!@#' \
   -X POST https://localhost:9200/_plugins/_ppl \
   -H 'Content-Type: application/json' \
-  -d '{"query": "source=otel-v1-apm-span-* | where `attributes.gen_ai.operation.name` = '\''invoke_agent'\'' AND durationInNanos > 5000000000 | fields traceId, `attributes.gen_ai.agent.name`, durationInNanos | sort - durationInNanos"}'
+  -d '{"query": "source=otel-v1-apm-span-* | where `span.attributes.gen_ai@operation@name` = '\''invoke_agent'\'' AND durationInNanos > 5000000000 | fields traceId, `span.attributes.gen_ai@agent@name`, durationInNanos | sort - durationInNanos"}'
 ```
 
 Find error spans (`status.code = 2` is ERROR in OTel):
@@ -348,7 +353,7 @@ Find error spans (`status.code = 2` is ERROR in OTel):
 curl -sk -u admin:'My_password_123!@#' \
   -X POST https://localhost:9200/_plugins/_ppl \
   -H 'Content-Type: application/json' \
-  -d '{"query": "source=otel-v1-apm-span-* | where `status.code` = 2 | fields traceId, serviceName, name, `events.attributes.exception.message` | sort - startTime | head 20"}'
+  -d '{"query": "source=otel-v1-apm-span-* | where `status.code` = 2 | fields traceId, serviceName, name, `events.attributes.exception@message` | sort - startTime | head 20"}'
 ```
 
 Token usage by model (your cost signal):
@@ -357,7 +362,7 @@ Token usage by model (your cost signal):
 curl -sk -u admin:'My_password_123!@#' \
   -X POST https://localhost:9200/_plugins/_ppl \
   -H 'Content-Type: application/json' \
-  -d '{"query": "source=otel-v1-apm-span-* | where `attributes.gen_ai.usage.input_tokens` > 0 | stats sum(`attributes.gen_ai.usage.input_tokens`) as in, sum(`attributes.gen_ai.usage.output_tokens`) as out by `attributes.gen_ai.request.model`"}'
+  -d '{"query": "source=otel-v1-apm-span-* | where cast(`span.attributes.gen_ai@usage@input_tokens` as int) > 0 | stats sum(cast(`span.attributes.gen_ai@usage@input_tokens` as int)) as in, sum(cast(`span.attributes.gen_ai@usage@output_tokens` as int)) as out by `span.attributes.gen_ai@request@model`"}'
 ```
 
 Track a multi-turn conversation (Acme follow-ups like "can I return it?"):
@@ -366,7 +371,7 @@ Track a multi-turn conversation (Acme follow-ups like "can I return it?"):
 curl -sk -u admin:'My_password_123!@#' \
   -X POST https://localhost:9200/_plugins/_ppl \
   -H 'Content-Type: application/json' \
-  -d '{"query": "source=otel-v1-apm-span-* | where `attributes.gen_ai.conversation.id` != '\'''\'' | stats count() as turns, sum(`attributes.gen_ai.usage.input_tokens`) as in_tokens by `attributes.gen_ai.conversation.id`"}'
+  -d '{"query": "source=otel-v1-apm-span-* | where `span.attributes.gen_ai@conversation@id` != '\'''\'' | stats count() as turns, sum(cast(`span.attributes.gen_ai@usage@input_tokens` as int)) as in_tokens by `span.attributes.gen_ai@conversation@id`"}'
 ```
 
 This is also where you catch the failure modes from Part 1: a trace with three `chat` spans and

@@ -15,6 +15,10 @@ Bring up the stack from the original tutorial folder
 ([`../acme-support-agent`](../acme-support-agent)) — `docker compose up -d` — then:
 
 ```bash
+# The GenAI SDK isn't on PyPI yet — install it from source first:
+git clone https://github.com/opensearch-project/genai-observability-sdk-py ../genai-observability-sdk-py
+pip install -e ../genai-observability-sdk-py
+
 pip install -e ../acme-shared      # shared tools, observability, dataset, criteria
 pip install -e .                   # this variant
 export OPENAI_API_KEY=sk-...
